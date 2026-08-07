@@ -35,10 +35,15 @@ def main():
         path.write_text(json.dumps({'Results': [{'Packages': list(packages)}]}), encoding='utf-8')
         return path
 
-    def run(scan_path, venv=None):
+    def run(scan_path, venv=None, extra_policy=None):
+        policy = ['--policy', str(POLICY)]
+        if extra_policy is not None:
+            path = tmp / 'extra-policy.txt'
+            path.write_text(extra_policy, encoding='utf-8')
+            policy += ['--policy', str(path)]
         result = subprocess.run(
             [sys.executable, str(SCRIPT), '--scan', str(scan_path),
-             '--venv', str(venv or tmp / 'venv'), '--policy', str(POLICY)],
+             '--venv', str(venv or tmp / 'venv')] + policy,
             capture_output=True, text=True)
         return result.returncode, result.stdout + result.stderr
 
@@ -78,12 +83,30 @@ def main():
     failures += not ok
     print(f'  {"PASS" if ok else "FAIL"}  {"partial scan caught":32} exit={code} want=1')
 
+    # Assertions stand in for a license the scanner could not read — but are
+    # checked like any other, so nobody can assert their way past the policy.
+    assertion_cases = [
+        ('assertion covers no license', evil(), 'evilpkg = MIT', 0),
+        ('assertion covers a text:// blob', evil('text://MIT License Copyright (c) x'),
+         'evilpkg = MIT', 0),
+        ('assertion covers UNKNOWN', evil('UNKNOWN'), 'evilpkg = MIT', 0),
+        ('assertion of a REFUSED license fails', evil(), 'evilpkg = GPL-3.0-only', 1),
+        # The scanner read this one perfectly well, so an assertion must not
+        # stand in for it — that is how a GPL package gets laundered into MIT.
+        ('assertion cannot override a read license', evil('GPL-3.0-only'), 'evilpkg = MIT', 1),
+        ('...not even onto an approved one', evil('Apache-2.0'), 'evilpkg = MIT', 1),
+    ]
+    for label, package, policy, expected in assertion_cases:
+        code, _ = run(scan(GOOD, package), extra_policy=policy + '\n')
+        failures += code != expected
+        print(f'  {"PASS" if code == expected else "FAIL"}  {label:32} exit={code} want={expected}')
+
     # A license name containing "://" must not parse as a per-package waiver.
     sys.path.insert(0, str(HERE))
     from check_licenses import load_policy
-    allowed, waivers = load_policy([str(POLICY)])
+    allowed, waivers, assertions = load_policy([str(POLICY)])
     url_entry = '3-clause bsd <http://www.opensource.org/licenses/bsd-license.php>'
-    ok = not waivers and url_entry in allowed
+    ok = not waivers and not assertions and url_entry in allowed
     failures += not ok
     print(f'  {"PASS" if ok else "FAIL"}  {"URL entry stays a license":32} waivers={len(waivers)}')
 

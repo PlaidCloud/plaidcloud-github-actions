@@ -21,35 +21,44 @@ BLANK_LICENSE = '<blank>'
 
 
 def load_policy(policy_files):
-    """Read policy files into (allowed licenses, per-package waivers).
+    """Read policy files into (allowed licenses, waivers, assertions).
 
-    A bare line is a license everything may use. A `package: license` line is a
-    waiver naming both, because a waiver has to say *what* it forgives — if the
-    package relicenses, the waiver stops covering it and the build fails, where
-    a bare package name would keep waving it through unseen.
+    Three kinds of line:
 
-    Only the first colon separates the two, so a license name containing one
-    stays part of the value rather than starting a new field. A waiver whose
-    license list contains a colon therefore fails to match anything and the
-    package fails elsewhere — restrictive, but silent, so keep them colon-free.
+    - A bare license name, which everything may use.
+    - `package: license` — a waiver, naming both, because a waiver has to say
+      *what* it forgives. If the package relicenses the waiver stops covering
+      it and the build fails, where a bare package name would keep waving it
+      through unseen.
+    - `package = license` — an assertion, for a package whose license the
+      scanner cannot read at all: one that declares nothing, or that puts its
+      whole license *text* where an identifier belongs. The asserted license
+      replaces what was scanned and is then checked like any other, so nobody
+      can assert their way to something the policy refuses.
+
+    Only the first separator counts, so a license name containing one stays
+    part of the value. Both forms require the left side to look like a package
+    name: one license in the list is `3-Clause BSD <http://...>`, whose `//`
+    would otherwise be read as a waiver for a package called
+    `3-Clause BSD <http`, silently losing the license entry as well.
     """
-    allowed, waivers = set(), {}
+    allowed, waivers, assertions = set(), {}, {}
     for policy_file in policy_files:
         for line in Path(policy_file).read_text(encoding='utf-8').splitlines():
             entry = line.strip()
             if not entry or entry.startswith('#'):
                 continue
+            package, separator, value = entry.partition('=')
+            if separator and PACKAGE_NAME.fullmatch(package.strip()):
+                assertions[normalise(package.strip())] = value.strip()
+                continue
             package, separator, licenses = entry.partition(':')
-            # A colon alone does not make a waiver — one license name in the
-            # list is `3-Clause BSD <http://...>`, whose `//` would otherwise
-            # be read as a waiver for a package called `3-Clause BSD <http`,
-            # silently losing the license entry as well.
             if separator and PACKAGE_NAME.fullmatch(package.strip()):
                 waived = waivers.setdefault(normalise(package.strip()), set())
                 waived.update(value.strip().lower() for value in licenses.split(',') if value.strip())
             else:
                 allowed.add(entry.lower())
-    return allowed, waivers
+    return allowed, waivers, assertions
 
 
 def scanned_packages(trivy_json):
@@ -76,6 +85,21 @@ def installed_distributions(venv_dir):
 
 def normalise(name):
     return re.sub(r'[-_.]+', '-', name).lower()
+
+
+def is_unreadable(licenses):
+    """Did the scanner fail to produce a license identifier for this package?
+
+    Three shapes, all seen in real Trivy output: nothing at all (the package
+    declares no license), a `text://` blob (its declaration is the whole license
+    *text*, which Trivy passes through rather than naming), and a literal
+    `UNKNOWN`. An assertion may only stand in for one of these — overriding a
+    license the scanner read correctly is what a waiver is for, and is visible
+    as one.
+    """
+    values = [value.strip() for value in licenses if value.strip()]
+    return not values or all(
+        value.startswith('text://') or value.upper() == 'UNKNOWN' for value in values)
 
 
 def abbreviate(value, limit=90):
@@ -126,10 +150,11 @@ def main():
                         help='policy file; repeatable, entries are unioned')
     args = parser.parse_args()
 
-    allowed, waivers = load_policy(args.policy)
+    allowed, waivers, assertions = load_policy(args.policy)
     packages = scanned_packages(args.scan)
-    print(f'Policy allows {len(allowed)} license spellings and {len(waivers)} package waiver(s) '
-          f'from {len(args.policy)} file(s). Trivy reported {len(packages)} packages.')
+    print(f'Policy allows {len(allowed)} license spellings, {len(waivers)} waiver(s) and '
+          f'{len(assertions)} assertion(s) from {len(args.policy)} file(s). '
+          f'Trivy reported {len(packages)} packages.')
 
     # A scanner that cannot read the venv reports nothing and exits 0, so a gate
     # with no completeness check passes a tree it never looked at. Trivy also
@@ -161,10 +186,20 @@ def main():
         # Coerced to str because a null in the JSON list is a malformed report,
         # not a license, and must read as undeclared rather than crash.
         licenses = [str(value) for value in (pkg.get('Licenses') or []) if value is not None]
+        asserted = assertions.get(normalise(name))
+        if asserted:
+            if is_unreadable(licenses):
+                licenses = [asserted]
+                applied.append((name, pkg.get('Version', ''), f'asserted {asserted}'))
+            else:
+                violations.append((name, pkg.get('Version', ''), '; '.join(licenses),
+                                   [f'asserted {asserted}, but the scanner read this package '
+                                    f'— drop the assertion, or waive the license it reports']))
+                continue
         if not any(value.strip() for value in licenses):
-            # A waiver names a license, so it cannot cover a package that
-            # declares none. That is deliberate: an undeclared license is a
-            # question for a human, not something to wave through by name.
+            # A waiver names a license it forgives, so it cannot cover a package
+            # that declares none — there is nothing to name. Assert the license
+            # instead, which says what we believe it to be and is checked.
             unlicensed.append(pkg)
             continue
         waived = waivers.get(normalise(name), set())
@@ -173,16 +208,18 @@ def main():
             if bad:
                 violations.append((name, pkg.get('Version', ''), expression, sorted(bad)))
             elif waived and disallowed_atoms(expression, allowed):
-                applied.append((name, pkg.get('Version', ''), expression))
+                applied.append((name, pkg.get('Version', ''), f'waived {expression}'))
 
-    for name, version, expression in applied:
-        print(f'  waived: {name} {version} is {expression}')
+    for name, version, note in applied:
+        print(f'  {note}: {name} {version}')
 
-    # Stale waivers are how an exemption list rots into a list of things nobody
+    # Stale entries are how an exemption list rots into a list of things nobody
     # remembers approving — liccheck.ini accumulated 22 of them across the org.
-    unused = sorted(set(waivers) - {normalise(pkg.get('Name', '')) for pkg in packages})
+    scanned = {normalise(pkg.get('Name', '')) for pkg in packages}
+    unused = sorted((set(waivers) | set(assertions)) - scanned)
     if unused:
-        print(f'  notice: {len(unused)} waiver(s) matched no scanned package: {", ".join(unused)}')
+        print(f'  notice: {len(unused)} waiver(s)/assertion(s) matched no scanned '
+              f'package: {", ".join(unused)}')
 
     for pkg in unlicensed:
         print(f'\nERROR: {pkg.get("Name", "<unnamed>")} {pkg.get("Version", "")} declares no license.')

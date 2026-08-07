@@ -74,6 +74,10 @@ Python-2.0
 PSFL
 Python Software Foundation
 Python Software Foundation License
+# The CNRI licence Python 1.6/2.0 shipped under, and still half of `regex`'s
+# `Apache-2.0 AND CNRI-Python`. Same family as the two above, OSI-approved and
+# permissive; liccheck waived `regex` by package name for want of this entry.
+CNRI-Python
 
 # --- Zope
 ZPL-2.1

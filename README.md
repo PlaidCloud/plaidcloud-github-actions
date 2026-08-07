@@ -89,14 +89,33 @@ Put repo-specific waivers in a repo-local file and pass it as `policy:`. Naming
 the license matters: if the package relicenses, the waiver stops covering it and
 the build fails, where a bare package name would keep waving it through.
 
-Two deliberate limits:
+**Waivers that match no scanned package are reported** on every run. An
+exemption list rots silently otherwise — liccheck's accumulated 22 entries
+across the org, most of them for packages whose licenses Trivy now reads
+without help.
 
-- **A waiver cannot cover a package that declares no license at all**, because
-  it has no license to name. An undeclared license is a question for a person.
-- **Waivers that match no scanned package are reported** on every run. An
-  exemption list rots silently otherwise — liccheck's accumulated 22 entries
-  across the org, most of them for packages whose licenses Trivy now reads
-  without help.
+### Assertions
+
+A waiver forgives a license the scanner *read*. When the scanner cannot read one
+at all, assert what it is with `=`:
+
+```
+# Declares no license of any kind. Google's, Apache-2.0 upstream.
+google-crc32c = Apache-2.0
+# Puts its whole license text in the `license` field, so Trivy passes it
+# through as `text://MIT License Copyright (c) 2022 OpenAI…`.
+tiktoken = MIT
+```
+
+The asserted license replaces what was scanned and is then **checked like any
+other**, so nobody can assert their way to something the policy refuses.
+
+It applies **only** where the scanner produced nothing usable: no license, a
+`text://` blob, or a literal `UNKNOWN`. Asserting over a license Trivy read
+correctly is an error, not an override — that is how a GPL package would get
+laundered into MIT, and it is what a waiver is for. This is the capability
+liccheck's `[Authorized Packages]` provided, except that it names the license
+rather than just the package, so it can be reviewed and can go stale loudly.
 
 ### Versioning
 
