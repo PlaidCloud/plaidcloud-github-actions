@@ -3,11 +3,18 @@ description: Fail the build on a Python dependency whose license the organisatio
 
 inputs:
   package:
-    description: What to install and scan. Defaults to the calling repository.
+    description: What to install and scan. Defaults to the calling repository. Ignored when `requirements` is set.
     required: false
     default: '.'
+  requirements:
+    description: >
+      Path to a requirements file to install instead of `package`. For a repo
+      that ships an image rather than a distribution and so has nothing
+      pip-installable of its own.
+    required: false
+    default: ''
   extras:
-    description: Comma-separated extras to install with it, e.g. "full,tracing". Empty installs base dependencies only.
+    description: Comma-separated extras to install with `package`, e.g. "full,tracing". Empty installs base dependencies only.
     required: false
     default: ''
   policy:
@@ -55,16 +62,20 @@ runs:
       shell: bash
       env:
         PACKAGE: ${{ inputs.package }}
+        REQUIREMENTS: ${{ inputs.requirements }}
         EXTRAS: ${{ inputs.extras }}
         PYTHON_VERSION: ${{ inputs.python-version }}
       run: |
         set -euo pipefail
         uv venv "${RUNNER_TEMP}/license-venv" --python "${PYTHON_VERSION}"
-        target="${PACKAGE}"
-        if [ -n "${EXTRAS}" ]; then
-          target="${PACKAGE}[${EXTRAS}]"
+        python="${RUNNER_TEMP}/license-venv/bin/python"
+        if [ -n "${REQUIREMENTS}" ]; then
+          uv pip install --python "${python}" -r "${REQUIREMENTS}"
+        elif [ -n "${EXTRAS}" ]; then
+          uv pip install --python "${python}" "${PACKAGE}[${EXTRAS}]"
+        else
+          uv pip install --python "${python}" "${PACKAGE}"
         fi
-        uv pip install --python "${RUNNER_TEMP}/license-venv/bin/python" "${target}"
 
     # `rootfs`, never `fs`: on the same venv, `trivy fs` returns no result
     # blocks at all while `rootfs` enumerates every package.

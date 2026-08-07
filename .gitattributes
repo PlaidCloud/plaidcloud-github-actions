@@ -1,0 +1,9 @@
+# Everything in this repo runs on a Linux runner. Normalise to LF in the
+# index and check it out as LF regardless of the developer's platform, so a
+# Windows checkout cannot commit CRLF into a shell script the action sources.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
