@@ -70,6 +70,33 @@ quietly.
 Changing this file changes the gate for every repository on the same tag.
 Review it as policy, not as configuration.
 
+### Per-package waivers
+
+A line of the form `package: license[, license…]` forgives one package a
+license the organisation otherwise refuses. It replaces liccheck's
+`[Authorized Packages]`, and unlike that section it names **what** it forgives:
+
+```
+# PyInstaller is GPLv2-or-later with the bootloader exception, which permits
+# distributing non-free programs built with it. That exception is prose — PyPI
+# declares the bare GPLv2 classifier and no License-Expression, so no scanner
+# reading metadata can see it. Permanent, not a migration convenience.
+pyinstaller: GPL-2.0-or-later, GPL-2.0-only, GNU General Public License v2 (GPLv2)
+```
+
+Put repo-specific waivers in a repo-local file and pass it as `policy:`. Naming
+the license matters: if the package relicenses, the waiver stops covering it and
+the build fails, where a bare package name would keep waving it through.
+
+Two deliberate limits:
+
+- **A waiver cannot cover a package that declares no license at all**, because
+  it has no license to name. An undeclared license is a question for a person.
+- **Waivers that match no scanned package are reported** on every run. An
+  exemption list rots silently otherwise — liccheck's accumulated 22 entries
+  across the org, most of them for packages whose licenses Trivy now reads
+  without help.
+
 ### Versioning
 
 Consumers pin a tag. A moving `v1` propagates a policy change everywhere at

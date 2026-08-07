@@ -15,16 +15,34 @@ import sys
 from pathlib import Path
 
 SPLIT_EXPRESSION = re.compile(r'\bAND\b|\bOR\b|\bWITH\b|[()]')
+PACKAGE_NAME = re.compile(r'[A-Za-z0-9._-]+')
 
 
-def allowed_licenses(policy_files):
-    allowed = set()
+def load_policy(policy_files):
+    """Read policy files into (allowed licenses, per-package waivers).
+
+    A bare line is a license everything may use. A `package: license` line is a
+    waiver naming both, because a waiver has to say *what* it forgives — if the
+    package relicenses, the waiver stops covering it and the build fails, where
+    a bare package name would keep waving it through unseen.
+    """
+    allowed, waivers = set(), {}
     for policy_file in policy_files:
         for line in Path(policy_file).read_text(encoding='utf-8').splitlines():
             entry = line.strip()
-            if entry and not entry.startswith('#'):
+            if not entry or entry.startswith('#'):
+                continue
+            package, separator, licenses = entry.partition(':')
+            # A colon alone does not make a waiver — one license name in the
+            # list is `3-Clause BSD <http://...>`, whose `//` would otherwise
+            # be read as a waiver for a package called `3-Clause BSD <http`,
+            # silently losing the license entry as well.
+            if separator and PACKAGE_NAME.fullmatch(package.strip()):
+                waived = waivers.setdefault(normalise(package.strip()), set())
+                waived.update(value.strip().lower() for value in licenses.split(',') if value.strip())
+            else:
                 allowed.add(entry.lower())
-    return allowed
+    return allowed, waivers
 
 
 def scanned_packages(trivy_json):
@@ -76,10 +94,10 @@ def main():
                         help='policy file; repeatable, entries are unioned')
     args = parser.parse_args()
 
-    allowed = allowed_licenses(args.policy)
+    allowed, waivers = load_policy(args.policy)
     packages = scanned_packages(args.scan)
-    print(f'Policy allows {len(allowed)} license spellings from {len(args.policy)} file(s). '
-          f'Trivy reported {len(packages)} packages.')
+    print(f'Policy allows {len(allowed)} license spellings and {len(waivers)} package waiver(s) '
+          f'from {len(args.policy)} file(s). Trivy reported {len(packages)} packages.')
 
     # A scanner that cannot read the venv reports nothing and exits 0, so a gate
     # with no completeness check passes a tree it never looked at. Trivy also
@@ -92,16 +110,31 @@ def main():
             print(f'  {name}')
         return 1
 
-    violations, unlicensed = [], []
+    violations, unlicensed, applied = [], [], []
     for pkg in packages:
         licenses = pkg.get('Licenses') or []
         if not licenses:
+            # A waiver names a license, so it cannot cover a package that
+            # declares none. That is deliberate: an undeclared license is a
+            # question for a human, not something to wave through by name.
             unlicensed.append(pkg)
             continue
+        waived = waivers.get(normalise(pkg['Name']), set())
         for expression in licenses:
-            bad = disallowed_atoms(expression, allowed)
+            bad = disallowed_atoms(expression, allowed | waived)
             if bad:
                 violations.append((pkg['Name'], pkg.get('Version', ''), expression, sorted(bad)))
+            elif waived and disallowed_atoms(expression, allowed):
+                applied.append((pkg['Name'], pkg.get('Version', ''), expression))
+
+    for name, version, expression in applied:
+        print(f'  waived: {name} {version} is {expression}')
+
+    # Stale waivers are how an exemption list rots into a list of things nobody
+    # remembers approving — liccheck.ini accumulated 22 of them across the org.
+    unused = sorted(set(waivers) - {normalise(pkg['Name']) for pkg in packages})
+    if unused:
+        print(f'  notice: {len(unused)} waiver(s) matched no scanned package: {", ".join(unused)}')
 
     for pkg in unlicensed:
         print(f'\nERROR: {pkg["Name"]} {pkg.get("Version", "")} declares no license.')
