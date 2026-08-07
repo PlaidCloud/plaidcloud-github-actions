@@ -15,6 +15,8 @@
 Apache-2.0
 Apache
 Apache 2.0
+Apache 2
+Apache-2
 Apache License 2.0
 Apache Licence v2.0
 Apache License, Version 2.0
@@ -35,6 +37,8 @@ CMU License (MIT-CMU)
 BSD-2-Clause
 BSD-3-Clause
 0BSD
+BSD Zero Clause License
+Zero-Clause BSD
 BSD
 BSD License
 3-Clause BSD
@@ -97,8 +101,23 @@ Zlib
 Unlicense
 The Unlicense (Unlicense)
 
+# An SPDX exception, reachable only as an atom of a WITH expression
+# (`Apache-2.0 WITH LLVM-exception`). workflow-runner's liccheck.ini approved
+# the compound form; splitting it leaves this atom needing its own entry.
+LLVM-exception
+
 # GPL is absent on purpose — liccheck.ini lists gpl and gpl v3 as unauthorized.
 # `Public Domain` is also absent: it appears on docutils alongside a
 # GPL-3.0-or-later declaration, and a bare "public domain" claim is not a
 # license grant we should wave through on sight. Both are live decisions — see
 # the dry-run notes on sc-24172.
+#
+# Two entries found in the repo audit are deliberately NOT carried over:
+#
+#   `unknown` and `mit and psf-2.0 unknown` — plaid-utilities' liccheck.ini
+#   authorised the literal string "unknown", which approves any package whose
+#   license liccheck could not determine. That is the whole of the cautious
+#   model disabled by one line.
+#
+#   `gnu general public license (gpl)` — plaid-rpc and plaidlink authorised it
+#   while both also list `gpl` as unauthorized.
