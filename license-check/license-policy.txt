@@ -1,0 +1,104 @@
+# Licenses approved for plaid's dependencies. Ported from liccheck.ini
+# (sc-24172). Matching is case-insensitive; see scripts/check_licenses.py.
+#
+# Two forms are listed on purpose. Trivy normalises many packages to an SPDX
+# identifier, but passes a package's declared text through verbatim when it
+# cannot — so `Apache-2.0` and `Apache Software License` both reach the policy
+# and both have to be named. That is the same reason liccheck.ini carried ~60
+# spellings of a dozen licenses; this is a port of that list, not a rewrite.
+#
+# Compound SPDX expressions (`MPL-2.0 AND (Apache-2.0 OR MIT)`) need no entry:
+# they are split into atoms and each atom is checked. Only free-text names need
+# to be spelled out.
+
+# --- Apache
+Apache-2.0
+Apache
+Apache 2.0
+Apache License 2.0
+Apache Licence v2.0
+Apache License, Version 2.0
+Apache Software
+Apache Software License
+ASL 2
+
+# --- MIT
+MIT
+MIT License
+MIT/X11
+MIT-0
+MIT No Attribution License (MIT-0)
+MIT-CMU
+CMU License (MIT-CMU)
+
+# --- BSD
+BSD-2-Clause
+BSD-3-Clause
+0BSD
+BSD
+BSD License
+3-Clause BSD
+3-Clause BSD <http://www.opensource.org/licenses/bsd-license.php>
+BSD 3-Clause
+New BSD
+New BSD License
+Simplified BSD
+
+# --- ISC
+ISC
+ISC License
+ISC License (ISCL)
+
+# --- Mozilla
+MPL-1.1
+MPL-2.0
+Mozilla Public License
+Mozilla Public License 1.1 (MPL 1.1)
+Mozilla Public License 2.0 (MPL 2.0)
+
+# --- Python Software Foundation
+PSF-2.0
+Python-2.0
+PSFL
+Python Software Foundation
+Python Software Foundation License
+
+# --- Zope
+ZPL-2.1
+ZPL 2.1
+Zope Public
+
+# --- LGPL. liccheck.ini authorised the family explicitly; plaid currently
+# takes psycopg2-binary (LGPL-2.1) and autocommand (LGPL-3.0) under it.
+LGPL-2.0-only
+LGPL-2.0-or-later
+LGPL-2.1-only
+LGPL-2.1-or-later
+LGPL-3.0-only
+LGPL-3.0-or-later
+LGPL
+GNU LGPL
+LGPL-2.1
+lgpl with exceptions or zpl
+GNU Library or Lesser General Public License (LGPL)
+GNU Lesser General Public License v2 or later (LGPLv2+)
+GNU Lesser General Public License (LGPL), Version 3
+GNU Lesser General Public License v3 (LGPLv3)
+
+# --- Other permissive forms already in liccheck.ini
+Artistic-1.0
+Artistic-2.0
+Artistic
+HPND
+Historical Permission Notice and Disclaimer (HPND)
+CC0-1.0
+CC0 1.0 Universal (CC0 1.0) Public Domain Dedication
+Zlib
+Unlicense
+The Unlicense (Unlicense)
+
+# GPL is absent on purpose — liccheck.ini lists gpl and gpl v3 as unauthorized.
+# `Public Domain` is also absent: it appears on docutils alongside a
+# GPL-3.0-or-later declaration, and a bare "public domain" claim is not a
+# license grant we should wave through on sight. Both are live decisions — see
+# the dry-run notes on sc-24172.

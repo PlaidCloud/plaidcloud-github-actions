@@ -1,0 +1,104 @@
+name: Check Dependency Licenses
+description: Fail the build on a Python dependency whose license the organisation has not approved.
+
+inputs:
+  package:
+    description: What to install and scan. Defaults to the calling repository.
+    required: false
+    default: '.'
+  extras:
+    description: Comma-separated extras to install with it, e.g. "full,tracing". Empty installs base dependencies only.
+    required: false
+    default: ''
+  policy:
+    description: Path to a repo-local policy file, applied in addition to the organisation policy rather than replacing it.
+    required: false
+    default: ''
+  python-version:
+    required: false
+    default: '3.12'
+  uv-version:
+    required: false
+    default: '0.11.10'
+  trivy-version:
+    description: >
+      Pinned deliberately. Trivy 0.73.0 stopped populating license findings on
+      Linux; this action reads per-package licenses instead and is unaffected,
+      but a compliance gate should never inherit a scanner upgrade silently.
+    required: false
+    default: 'v0.70.0'
+  diagnostics:
+    description: Print what each Trivy scan surface saw. Worth running once when onboarding a repo.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v7
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - uses: astral-sh/setup-uv@v7
+      with:
+        version: ${{ inputs.uv-version }}
+
+    - uses: aquasecurity/setup-trivy@v0.3.1
+      with:
+        version: ${{ inputs.trivy-version }}
+
+    # Licenses are read from each installed package's site-packages METADATA;
+    # a requirements file carries no license data at all. Inputs travel through
+    # env rather than `${{ }}` interpolation so nothing in them can be parsed
+    # as shell.
+    - name: Install the package into a scannable venv
+      shell: bash
+      env:
+        PACKAGE: ${{ inputs.package }}
+        EXTRAS: ${{ inputs.extras }}
+        PYTHON_VERSION: ${{ inputs.python-version }}
+      run: |
+        set -euo pipefail
+        uv venv "${RUNNER_TEMP}/license-venv" --python "${PYTHON_VERSION}"
+        target="${PACKAGE}"
+        if [ -n "${EXTRAS}" ]; then
+          target="${PACKAGE}[${EXTRAS}]"
+        fi
+        uv pip install --python "${RUNNER_TEMP}/license-venv/bin/python" "${target}"
+
+    # `rootfs`, never `fs`: on the same venv, `trivy fs` returns no result
+    # blocks at all while `rootfs` enumerates every package.
+    - name: Extract dependency licenses
+      shell: bash
+      run: |
+        set -euo pipefail
+        trivy rootfs --scanners license --quiet --format json \
+          --output "${RUNNER_TEMP}/licenses.json" "${RUNNER_TEMP}/license-venv"
+
+    - name: Report what each scan surface saw
+      if: inputs.diagnostics == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        trivy fs --scanners license --quiet --format json \
+          --output "${RUNNER_TEMP}/licenses-fs.json" "${RUNNER_TEMP}/license-venv"
+        python3 "${GITHUB_ACTION_PATH}/license_diagnostics.py" \
+          "${RUNNER_TEMP}/licenses.json" "${RUNNER_TEMP}/licenses-fs.json" \
+          "${RUNNER_TEMP}/license-venv"
+      env:
+        GITHUB_ACTION_PATH: ${{ github.action_path }}
+
+    - name: Enforce the license policy
+      shell: bash
+      env:
+        GITHUB_ACTION_PATH: ${{ github.action_path }}
+        REPO_POLICY: ${{ inputs.policy }}
+      run: |
+        set -euo pipefail
+        args=(--scan "${RUNNER_TEMP}/licenses.json"
+              --venv "${RUNNER_TEMP}/license-venv"
+              --policy "${GITHUB_ACTION_PATH}/license-policy.txt")
+        if [ -n "${REPO_POLICY}" ]; then
+          args+=(--policy "${REPO_POLICY}")
+        fi
+        python3 "${GITHUB_ACTION_PATH}/check_licenses.py" "${args[@]}"
