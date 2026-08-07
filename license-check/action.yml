@@ -79,11 +79,19 @@ runs:
 
     # `rootfs`, never `fs`: on the same venv, `trivy fs` returns no result
     # blocks at all while `rootfs` enumerates every package.
+    #
+    # setuptools bundles a deliberately license-less fixture package in its
+    # pkg_resources test data. It is not a dependency, but it carries EGG-INFO
+    # and Trivy reads it like any other package, so it arrives as
+    # `my-test-package 1.0 is UNKNOWN` and fails a repo that has done nothing
+    # wrong. Skipped by path rather than by name so a real package could never
+    # be hidden by sharing one.
     - name: Extract dependency licenses
       shell: bash
       run: |
         set -euo pipefail
         trivy rootfs --scanners license --quiet --format json \
+          --skip-dirs '**/pkg_resources/tests/**' \
           --output "${RUNNER_TEMP}/licenses.json" "${RUNNER_TEMP}/license-venv"
 
     - name: Report what each scan surface saw
