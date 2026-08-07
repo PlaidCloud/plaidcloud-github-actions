@@ -100,6 +100,14 @@ Two deliberate limits:
 
 ### Versioning
 
-Consumers pin a tag. A moving `v1` propagates a policy change everywhere at
-once, which is the point of a shared gate and also its risk — prefer bumping
-`v1.x` deliberately over force-moving `v1`.
+- **`@v1`** — moving, and what consumers should normally pin. A policy change
+  reaches every repository on the next run, which is the entire point of
+  putting the policy in one place; pinning exact versions everywhere would mean
+  ten pull requests to disallow one license.
+- **`@v1.0.0`** — frozen. Use it to hold a repository back deliberately, and
+  say why in the workflow.
+
+`v1` is moved only for a change we intend to propagate, and only from a green
+`main`. A change to an input's name or meaning is a `v2`, not a `v1` move — the
+gate failing everywhere at once is acceptable, a gate silently doing nothing
+everywhere at once is not.
