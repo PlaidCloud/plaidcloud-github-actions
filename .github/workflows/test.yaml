@@ -1,0 +1,32 @@
+name: Test
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  gate:
+    name: License gate regression tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: python license-check/test_check_licenses.py
+
+  # The tests above use synthetic Trivy JSON, which cannot catch a change in
+  # what Trivy actually emits. This runs the whole action against this repo's
+  # own tiny dependency set — no package to install, so it scans the venv uv
+  # creates, which is enough to prove the wiring end to end.
+  action:
+    name: Action runs end to end
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./license-check
+        with:
+          requirements: .github/workflows/sample-requirements.txt
+          diagnostics: true

@@ -10,6 +10,13 @@
 # Compound SPDX expressions (`MPL-2.0 AND (Apache-2.0 OR MIT)`) need no entry:
 # they are split into atoms and each atom is checked. Only free-text names need
 # to be spelled out.
+#
+# NEVER add a compound-looking `X AND/OR/WITH Y` line here unless you mean to
+# approve exactly that verbatim joint string. Because a whole string is matched
+# before it is split, such a line does not approve X and Y separately — it
+# creates a narrow allowance for that one spelling, and would carry a
+# disallowed half in with it. `lgpl with exceptions or zpl` below only looks
+# like one; it is a single license name inherited from liccheck.ini.
 
 # --- Apache
 Apache-2.0
@@ -41,6 +48,7 @@ BSD Zero Clause License
 Zero-Clause BSD
 BSD
 BSD License
+BSD License (BSD)
 3-Clause BSD
 3-Clause BSD <http://www.opensource.org/licenses/bsd-license.php>
 BSD 3-Clause

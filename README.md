@@ -24,7 +24,8 @@ setuptools 82 — and was last released in September 2023
 
 | Input | Default | Notes |
 |---|---|---|
-| `package` | `.` | What to install and scan. |
+| `package` | `.` | What to install and scan. Ignored when `requirements` is set. |
+| `requirements` | `''` | Install a requirements file instead of `package`, for a repo that ships an image and has nothing pip-installable of its own. |
 | `extras` | `''` | Comma-separated, e.g. `full,tracing`. Empty installs base dependencies. |
 | `policy` | `''` | Repo-local policy file, applied **in addition to** `license-policy.txt`, not instead of it. |
 | `python-version` | `3.12` | |

@@ -1,0 +1,8 @@
+# Not a dependency of anything — a small, licence-diverse set the end-to-end
+# job installs so the action has a real venv to scan. Chosen to exercise the
+# paths that matter: an SPDX id (requests), a free-text declaration Trivy passes
+# through verbatim (bleach: "Apache Software License"), and a compound
+# expression (packaging: "Apache-2.0 OR BSD-2-Clause").
+requests
+bleach
+packaging

@@ -14,8 +14,10 @@ import re
 import sys
 from pathlib import Path
 
-SPLIT_EXPRESSION = re.compile(r'\bAND\b|\bOR\b|\bWITH\b|[()]')
+SPLIT_EXPRESSION = re.compile(r'\bAND\b|\bOR\b|\bWITH\b')
+GROUPING = re.compile(r'[()]')
 PACKAGE_NAME = re.compile(r'[A-Za-z0-9._-]+')
+BLANK_LICENSE = '<blank>'
 
 
 def load_policy(policy_files):
@@ -25,6 +27,11 @@ def load_policy(policy_files):
     waiver naming both, because a waiver has to say *what* it forgives — if the
     package relicenses, the waiver stops covering it and the build fails, where
     a bare package name would keep waving it through unseen.
+
+    Only the first colon separates the two, so a license name containing one
+    stays part of the value rather than starting a new field. A waiver whose
+    license list contains a colon therefore fails to match anything and the
+    package fails elsewhere — restrictive, but silent, so keep them colon-free.
     """
     allowed, waivers = set(), {}
     for policy_file in policy_files:
@@ -55,6 +62,12 @@ def installed_distributions(venv_dir):
 
     Vendored dist-info nested inside another package is excluded: Trivy reports
     those too, but they are not what the completeness check measures.
+
+    Only `.dist-info` is counted. `.egg-info` layouts come from legacy
+    `setup.py develop` installs, which the action never performs — it always
+    does a non-editable `uv pip install`, and uv installs from a wheel, which
+    always yields `.dist-info`. A caller that installs some other way would
+    weaken this check rather than break it.
     """
     return {normalise(dist_info.name.split('-')[0])
             for site_packages in Path(venv_dir).glob('lib/python*/site-packages')
@@ -63,6 +76,18 @@ def installed_distributions(venv_dir):
 
 def normalise(name):
     return re.sub(r'[-_.]+', '-', name).lower()
+
+
+def abbreviate(value, limit=90):
+    """Keep a failure readable.
+
+    When Trivy cannot name a license it falls back to the whole license text
+    under a `text://` prefix — thousands of characters that split into dozens of
+    prose fragments. Reporting those verbatim buries the packages that actually
+    need attention.
+    """
+    collapsed = ' '.join(value.split())
+    return collapsed if len(collapsed) <= limit else collapsed[:limit] + '…'
 
 
 def disallowed_atoms(expression, allowed):
@@ -79,11 +104,18 @@ def disallowed_atoms(expression, allowed):
     including both sides of an OR. That can fail a package we could legally take
     under the permitted half of a dual license, which is the right way for a
     compliance gate to be wrong — it asks for a human instead of choosing.
+
+    Parentheses are removed before splitting, not treated as separators, so an
+    empty atom afterwards means a genuinely missing operand rather than an
+    artefact of adjacent delimiters. Such an atom is refused: `''` and a
+    truncated `'MIT AND '` would otherwise answer "nothing disallowed" — the
+    first for a package that declared nothing, the second on the strength of the
+    half that survived.
     """
     if expression.strip().lower() in allowed:
         return set()
-    atoms = {atom.strip() for atom in SPLIT_EXPRESSION.split(expression)}
-    return {atom for atom in atoms if atom and atom.lower() not in allowed}
+    atoms = {atom.strip() for atom in SPLIT_EXPRESSION.split(GROUPING.sub(' ', expression))}
+    return {atom or BLANK_LICENSE for atom in atoms if atom.lower() not in allowed}
 
 
 def main():
@@ -103,7 +135,20 @@ def main():
     # with no completeness check passes a tree it never looked at. Trivy also
     # read a *subset* on one version, which a bare "more than zero" floor would
     # not catch.
-    missed = installed_distributions(args.venv) - {normalise(pkg['Name']) for pkg in packages}
+    #
+    # Both sides are required to be non-empty first. Comparing two empty sets
+    # yields "nothing missed" and reports success having verified nothing, so
+    # a scan pointed at the wrong tree, or a venv path that does not exist,
+    # would pass — the precise failure this check exists to prevent. Every venv
+    # this runs against installs at least one distribution.
+    installed = installed_distributions(args.venv)
+    if not packages or not installed:
+        print(f'\nERROR: nothing to check — the scan reported {len(packages)} packages and '
+              f'{args.venv} contains {len(installed)} installed distributions. '
+              f'Expected both to be non-empty; check that --scan and --venv name the same tree.')
+        return 1
+
+    missed = installed - {normalise(pkg.get('Name', '')) for pkg in packages}
     if missed:
         print(f'\nERROR: {len(missed)} installed distributions were not scanned:')
         for name in sorted(missed):
@@ -112,34 +157,38 @@ def main():
 
     violations, unlicensed, applied = [], [], []
     for pkg in packages:
-        licenses = pkg.get('Licenses') or []
-        if not licenses:
+        name = pkg.get('Name', '<unnamed>')
+        # Coerced to str because a null in the JSON list is a malformed report,
+        # not a license, and must read as undeclared rather than crash.
+        licenses = [str(value) for value in (pkg.get('Licenses') or []) if value is not None]
+        if not any(value.strip() for value in licenses):
             # A waiver names a license, so it cannot cover a package that
             # declares none. That is deliberate: an undeclared license is a
             # question for a human, not something to wave through by name.
             unlicensed.append(pkg)
             continue
-        waived = waivers.get(normalise(pkg['Name']), set())
+        waived = waivers.get(normalise(name), set())
         for expression in licenses:
             bad = disallowed_atoms(expression, allowed | waived)
             if bad:
-                violations.append((pkg['Name'], pkg.get('Version', ''), expression, sorted(bad)))
+                violations.append((name, pkg.get('Version', ''), expression, sorted(bad)))
             elif waived and disallowed_atoms(expression, allowed):
-                applied.append((pkg['Name'], pkg.get('Version', ''), expression))
+                applied.append((name, pkg.get('Version', ''), expression))
 
     for name, version, expression in applied:
         print(f'  waived: {name} {version} is {expression}')
 
     # Stale waivers are how an exemption list rots into a list of things nobody
     # remembers approving — liccheck.ini accumulated 22 of them across the org.
-    unused = sorted(set(waivers) - {normalise(pkg['Name']) for pkg in packages})
+    unused = sorted(set(waivers) - {normalise(pkg.get('Name', '')) for pkg in packages})
     if unused:
         print(f'  notice: {len(unused)} waiver(s) matched no scanned package: {", ".join(unused)}')
 
     for pkg in unlicensed:
-        print(f'\nERROR: {pkg["Name"]} {pkg.get("Version", "")} declares no license.')
+        print(f'\nERROR: {pkg.get("Name", "<unnamed>")} {pkg.get("Version", "")} declares no license.')
     for name, version, expression, bad in violations:
-        print(f'\nERROR: {name} {version} is {expression} — not approved: {", ".join(bad)}')
+        print(f'\nERROR: {name} {version} is {abbreviate(expression)} — '
+              f'not approved: {", ".join(abbreviate(atom) for atom in bad)}')
 
     if violations or unlicensed:
         print(f'\n{len(violations) + len(unlicensed)} package(s) failed the license policy.')
