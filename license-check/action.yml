@@ -67,7 +67,12 @@ runs:
         PYTHON_VERSION: ${{ inputs.python-version }}
       run: |
         set -euo pipefail
-        uv venv "${RUNNER_TEMP}/license-venv" --python "${PYTHON_VERSION}"
+        # --clear because a repo with more than one requirements file calls this
+        # action once per file in the same job, and `uv venv` refuses an existing
+        # virtualenv rather than replacing it. Without this the second call fails
+        # with "A virtual environment already exists", and the first scan's
+        # packages would otherwise leak into the second.
+        uv venv --clear "${RUNNER_TEMP}/license-venv" --python "${PYTHON_VERSION}"
         python="${RUNNER_TEMP}/license-venv/bin/python"
         if [ -n "${REQUIREMENTS}" ]; then
           uv pip install --python "${python}" -r "${REQUIREMENTS}"
