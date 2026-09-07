@@ -29,7 +29,9 @@ inputs:
     default: '0.11.10'
   trivy-version:
     description: >
-      Pinned deliberately. Trivy 0.73.0 stopped populating license findings on
+      An exact release — `v0.70.0` or `0.70.0` — whose checksums are committed
+      in `trivy-checksums.txt`. `latest` is refused on purpose.
+      Pinned deliberately: Trivy 0.73.0 stopped populating license findings on
       Linux; this action reads per-package licenses instead and is unaffected,
       but a compliance gate should never inherit a scanner upgrade silently.
     required: false
@@ -50,9 +52,134 @@ runs:
       with:
         version: ${{ inputs.uv-version }}
 
-    - uses: aquasecurity/setup-trivy@v0.3.1
+    # Trivy comes from its release assets directly rather than through
+    # aquasecurity/setup-trivy. That action resolves the tag with a single
+    # unauthenticated, un-retried request to github.com and reports any non-200
+    # as "unable to find <tag>", so a rate-limited moment arrives looking like a
+    # deleted release - one job installed this very version twice and lost the
+    # third. An asset URL needs no lookup, and this download retries.
+    #
+    # The version also names the install directory, which makes an earlier
+    # invocation in the same job visible: a repo scanning several requirements
+    # files installs Trivy once rather than once per file.
+    - name: Work out which Trivy to fetch
+      id: trivy
+      shell: bash
+      env:
+        TRIVY_VERSION: ${{ inputs.trivy-version }}
+        TRIVY_OS: ${{ runner.os }}
+        TRIVY_ARCH: ${{ runner.arch }}
+      run: |
+        set -euo pipefail
+        if ! printf '%s' "${TRIVY_VERSION}" | grep -Eq '^v?[0-9]+[.][0-9]+[.][0-9]+$'; then
+          echo "::error::trivy-version must name an exact release, e.g. 'v0.70.0'. Got '${TRIVY_VERSION}'." >&2
+          exit 1
+        fi
+        version="${TRIVY_VERSION#v}"
+        case "${TRIVY_OS}-${TRIVY_ARCH}" in
+          Linux-X64)   asset='Linux-64bit' ;;
+          Linux-ARM64) asset='Linux-ARM64' ;;
+          macOS-X64)   asset='macOS-64bit' ;;
+          macOS-ARM64) asset='macOS-ARM64' ;;
+          *)
+            echo "::error::No Trivy release asset is mapped for ${TRIVY_OS}/${TRIVY_ARCH}." >&2
+            exit 1
+            ;;
+        esac
+        dir="${RUNNER_TEMP}/trivy-${version}"
+        installed=false
+        if [ -x "${dir}/trivy" ]; then
+          installed=true
+        fi
+        {
+          echo "version=${version}"
+          echo "asset=${asset}"
+          echo "dir=${dir}"
+          echo "download-dir=${RUNNER_TEMP}/trivy-download-${version}"
+          echo "key=trivy-tarball-${version}-${TRIVY_OS}-${TRIVY_ARCH}"
+          echo "installed=${installed}"
+        } >> "${GITHUB_OUTPUT}"
+
+    # The tarball is cached, not the unpacked binary, because the tarball is the
+    # thing the committed checksums can vouch for. A cache entry is written by
+    # whoever can run a workflow on the repo, so a restored binary trusted on
+    # sight would be a scanner an attacker chose - and one that fabricated a
+    # clean report would satisfy the completeness check too, by reading the very
+    # same dist-info the check counts.
+    - name: Restore the Trivy download from the cache
+      id: trivy-cache
+      if: steps.trivy.outputs.installed != 'true'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        version: ${{ inputs.trivy-version }}
+        path: ${{ steps.trivy.outputs.download-dir }}
+        key: ${{ steps.trivy.outputs.key }}
+
+    # --retry-all-errors so a 429 or a 5xx is retried and not only a dropped
+    # connection, and --fail so an HTTP error is a failure at all rather than a
+    # page of HTML saved as a tarball.
+    - name: Download Trivy
+      if: steps.trivy.outputs.installed != 'true' && steps.trivy-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ steps.trivy.outputs.version }}
+        ASSET: ${{ steps.trivy.outputs.asset }}
+        DOWNLOAD_DIR: ${{ steps.trivy.outputs.download-dir }}
+      run: |
+        set -euo pipefail
+        tarball="trivy_${VERSION}_${ASSET}.tar.gz"
+        url="https://github.com/aquasecurity/trivy/releases/download/v${VERSION}/${tarball}"
+        mkdir -p "${DOWNLOAD_DIR}"
+        curl --retry 5 --retry-delay 2 --retry-all-errors --fail --silent --show-error --location --output "${DOWNLOAD_DIR}/${tarball}" "${url}"
+
+    # Runs whether the tarball was downloaded or restored, so there is no path
+    # on which a Trivy binary is trusted unverified. The checksums are committed
+    # rather than fetched for the same reason: a checksums file pulled from the
+    # network alongside the tarball vouches for transit only, and one read from
+    # the cache would be chosen by whoever wrote the cache.
+    #
+    # Unpacked via mktemp and mv so `dir/trivy` either does not exist or is a
+    # whole, verified binary - never a half-extracted one that the same-job
+    # check above would read as installed.
+    - name: Verify and unpack Trivy
+      if: steps.trivy.outputs.installed != 'true'
+      shell: bash
+      env:
+        VERSION: ${{ steps.trivy.outputs.version }}
+        ASSET: ${{ steps.trivy.outputs.asset }}
+        DOWNLOAD_DIR: ${{ steps.trivy.outputs.download-dir }}
+        DIR: ${{ steps.trivy.outputs.dir }}
+        CHECKSUMS: ${{ github.action_path }}/trivy-checksums.txt
+      run: |
+        set -euo pipefail
+        tarball="trivy_${VERSION}_${ASSET}.tar.gz"
+        entry="$(awk -v want="${tarball}" '$2 == want' "${CHECKSUMS}")"
+        if [ -z "${entry}" ]; then
+          echo "::error::${CHECKSUMS} has no entry for ${tarball}. Changing trivy-version means committing that release's checksums file alongside it - this gate pins its scanner by hash, not only by tag." >&2
+          exit 1
+        fi
+        ( cd "${DOWNLOAD_DIR}" && echo "${entry}" | sha256sum -c - )
+        work="$(mktemp -d "${RUNNER_TEMP}/trivy-unpack-XXXXXX")"
+        tar -xzf "${DOWNLOAD_DIR}/${tarball}" -C "${work}" trivy
+        chmod +x "${work}/trivy"
+        mkdir -p "${DIR}"
+        mv "${work}/trivy" "${DIR}/trivy"
+        rm -rf "${work}"
+
+    # After verification, so a tarball that failed its checksum is never handed
+    # on to the next job.
+    - name: Save the Trivy download to the cache
+      if: steps.trivy.outputs.installed != 'true' && steps.trivy-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.trivy.outputs.download-dir }}
+        key: ${{ steps.trivy.outputs.key }}
+
+    - name: Put Trivy on PATH
+      if: steps.trivy.outputs.installed != 'true'
+      shell: bash
+      env:
+        DIR: ${{ steps.trivy.outputs.dir }}
+      run: echo "${DIR}" >> "${GITHUB_PATH}"
 
     # Licenses are read from each installed package's site-packages METADATA;
     # a requirements file carries no license data at all. Inputs travel through

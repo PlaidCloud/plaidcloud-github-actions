@@ -30,3 +30,11 @@ jobs:
         with:
           requirements: .github/workflows/sample-requirements.txt
           diagnostics: true
+
+      # A repo with several requirements files calls the action once per file
+      # in one job, so the second call is a real code path, not a repeat: it is
+      # what `uv venv --clear` exists for, and what decides whether Trivy is
+      # installed once or once per file. Nothing else covers it.
+      - uses: ./license-check
+        with:
+          requirements: .github/workflows/sample-requirements.txt
