@@ -30,7 +30,7 @@ setuptools 82 — and was last released in September 2023
 | `policy` | `''` | Repo-local policy file, applied **in addition to** `license-policy.txt`, not instead of it. |
 | `python-version` | `3.12` | |
 | `uv-version` | `0.11.10` | |
-| `trivy-version` | `v0.70.0` | Pinned deliberately — see below. |
+| `trivy-version` | `v0.70.0` | An exact release whose checksums are committed here; `latest` is refused. Pinned deliberately — see below. |
 | `diagnostics` | `false` | Print what each Trivy scan surface saw. Run once when onboarding a repo. |
 
 ### How it decides
@@ -51,6 +51,51 @@ Trivy is the license **extractor**; the policy is applied by
   Every `.dist-info` in the venv must appear in Trivy's package list, so the
   check self-calibrates as dependencies change rather than resting on a
   hardcoded floor.
+
+### How Trivy is installed
+
+The action fetches Trivy from its release assets itself rather than through
+`aquasecurity/setup-trivy`.
+
+That action shells out to Trivy's `contrib/install.sh`, which turns a tag into a
+download by making one unauthenticated, un-retried request to `github.com` and
+treating any non-200 as *"unable to find `<tag>`"*. A rate-limited moment
+therefore arrives looking like a deleted release. It is not hypothetical: one
+job installed `v0.70.0` successfully twice and lost the third attempt forty
+seconds later, and the error named the pin rather than the network.
+
+An asset URL needs no tag lookup at all, so the install is:
+
+- **Downloaded directly**, with `curl --retry 5 --retry-all-errors`, so a 429 or
+  a 5xx is retried rather than fatal.
+- **Verified against `license-check/trivy-checksums.txt`**, which is the release's
+  own checksums file, committed here.
+- **Cached** as the *tarball*, under `trivy-tarball-<version>-<os>-<arch>`.
+- **Installed once per job.** The version names the install directory, so a repo
+  scanning several requirements files calls the action several times and still
+  installs Trivy once.
+
+The verification runs on every path — a fresh download and a cache hit alike —
+because a cache entry is written by anyone who can run a workflow on the repo. A
+Trivy trusted on sight is a scanner someone else chose, and one that fabricated a
+clean report would satisfy the completeness check too, by reading the very same
+`.dist-info` the check counts. That is why the tarball is what gets cached: it is
+the thing the committed checksums can vouch for.
+
+The checksums are committed rather than fetched for the same reason. Pulled from
+the network beside the tarball they would vouch for transit only; read from the
+cache they would be chosen by whoever wrote the cache.
+
+`trivy-version` must therefore name an exact release **whose checksums are
+committed here**. Changing it means committing that release's `checksums.txt`
+alongside it — the gate pins its scanner by hash, not only by tag, and a version
+it cannot vouch for fails loudly rather than quietly. `latest` is refused.
+
+Two things `aquasecurity/setup-trivy` did that this does not: it accepted
+`github-server-url` and `token` inputs for GHES or a private mirror, and it staged
+Trivy's `contrib/*.tpl` report templates next to the binary. This action only ever
+asks for `--format json`, so nothing here wanted either, but a repo running its own
+`trivy` off the `PATH` this action sets will no longer find those templates.
 
 ### The policy file
 
