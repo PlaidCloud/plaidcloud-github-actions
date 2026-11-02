@@ -1,11 +1,13 @@
 name: Test
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
 jobs:
   gate:
+    if: ${{ !github.event.pull_request.draft }}
     name: License gate regression tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -21,6 +23,7 @@ jobs:
   # own tiny dependency set — no package to install, so it scans the venv uv
   # creates, which is enough to prove the wiring end to end.
   action:
+    if: ${{ !github.event.pull_request.draft }}
     name: Action runs end to end
     runs-on: ubuntu-latest
     timeout-minutes: 10
