@@ -14,6 +14,13 @@ case "$*" in
   "api --paginate repos/o/r/pulls/7/reviews") jq -c '.pages[]' "$CASE" ;;
   "api repos/o/r/collaborators/"*"/permission --jq "*)
     login=${2#repos/o/r/collaborators/}; login=${login%/permission}
+    # .lookup_error[login] = HTTP status: fail the lookup the way gh does.
+    code=$(jq -r --arg u "$login" '.lookup_error[$u] // empty' "$CASE")
+    case $code in
+      "") ;;
+      404) echo "gh: $login is not a user (HTTP 404)" >&2; exit 1 ;;
+      *) echo "gh: Bad Gateway (HTTP $code)" >&2; exit 1 ;;
+    esac
     jq --arg u "$login" '{permission: (.perm[$u] // "write"), user: {login: $u}}' "$CASE" | jq -r "$4" ;;
   *) echo "unexpected gh call: $*" >&2; exit 2 ;;
 esac

@@ -9,13 +9,18 @@ name: Clean-room review recorded
 # Canonical copy and regression tests: PlaidCloud/plaidcloud-github-actions.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # edited: retargeting the base (e.g. beta-x -> master) must re-run the gate.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   pull_request_review:
     types: [submitted, edited, dismissed]
 
 permissions:
   pull-requests: read
   contents: read
+
+concurrency:
+  group: clean-room-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   clean-room-review:
@@ -38,9 +43,19 @@ jobs:
           fi
           gh api --paginate "repos/$REPO/pulls/$PR/reviews" | jq -s 'add // []' > reviews.json
           # author_association hides private org members, so ask for repo permission.
-          writers=$(jq -r '[.[].user.login // empty] | unique[]' reviews.json | while read -r login; do
-            gh api "repos/$REPO/collaborators/$login/permission" --jq 'select(.permission | IN("admin", "write")) | .user.login' || true
-          done | jq -R . | jq -sc .)
+          # Only a 404 (deleted/unknown account) means "not a writer"; any other
+          # lookup failure fails closed rather than dropping a blocker's verdict.
+          : > writers.txt
+          while read -r login; do
+            if perm=$(gh api "repos/$REPO/collaborators/$login/permission" --jq .permission 2> err.txt); then
+              case $perm in admin|write) echo "$login" >> writers.txt ;; esac
+            elif grep -q '(HTTP 404)' err.txt; then
+              echo "$login: no such account; their reviews do not count."
+            else
+              echo "::error::Could not read $login's permission on $REPO ($(cat err.txt)); failing closed. Re-run this check."; exit 1
+            fi
+          done < <(jq -r '[.[].user.login // empty] | unique[]' reviews.json)
+          writers=$(jq -R . writers.txt | jq -sc .)
           # Latest verdict per reviewer, as GitHub counts them: plain comments
           # change nothing, a dismissal clears. A clean-room comment is read
           # from its first line only, so prose such as "cannot APPROVE" or a

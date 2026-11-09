@@ -641,5 +641,123 @@
     }
    ]
   ]
+ },
+ {
+  "name": "blocker's permission lookup returns 502 (fail closed, not dropped)",
+  "expect": "fail",
+  "head": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+  "pages": [
+   [
+    {
+     "user": {
+      "login": "x"
+     },
+     "author_association": "MEMBER",
+     "state": "APPROVED",
+     "body": "",
+     "commit_id": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+     "submitted_at": "2026-11-08T10:40:00Z"
+    },
+    {
+     "user": {
+      "login": "y"
+     },
+     "author_association": "MEMBER",
+     "state": "CHANGES_REQUESTED",
+     "body": "",
+     "commit_id": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+     "submitted_at": "2026-11-08T10:41:00Z"
+    }
+   ]
+  ],
+  "lookup_error": {
+   "y": 502
+  }
+ },
+ {
+  "name": "approval from a deleted account (permission 404) is ignored",
+  "expect": "fail",
+  "head": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+  "pages": [
+   [
+    {
+     "user": {
+      "login": "gone"
+     },
+     "author_association": "MEMBER",
+     "state": "APPROVED",
+     "body": "",
+     "commit_id": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+     "submitted_at": "2026-11-08T10:42:00Z"
+    }
+   ]
+  ],
+  "lookup_error": {
+   "gone": 404
+  }
+ },
+ {
+  "name": "deleted account's change request (404) is ignored; writer approved head",
+  "expect": "pass",
+  "head": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+  "pages": [
+   [
+    {
+     "user": {
+      "login": "gone"
+     },
+     "author_association": "MEMBER",
+     "state": "CHANGES_REQUESTED",
+     "body": "",
+     "commit_id": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+     "submitted_at": "2026-11-08T10:43:00Z"
+    },
+    {
+     "user": {
+      "login": "x"
+     },
+     "author_association": "MEMBER",
+     "state": "APPROVED",
+     "body": "",
+     "commit_id": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+     "submitted_at": "2026-11-08T10:44:00Z"
+    }
+   ]
+  ],
+  "lookup_error": {
+   "gone": 404
+  }
+ },
+ {
+  "name": "approver's permission lookup returns 502 while another writer approved",
+  "expect": "fail",
+  "head": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+  "pages": [
+   [
+    {
+     "user": {
+      "login": "x"
+     },
+     "author_association": "MEMBER",
+     "state": "APPROVED",
+     "body": "",
+     "commit_id": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+     "submitted_at": "2026-11-08T10:45:00Z"
+    },
+    {
+     "user": {
+      "login": "y"
+     },
+     "author_association": "MEMBER",
+     "state": "APPROVED",
+     "body": "",
+     "commit_id": "hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh",
+     "submitted_at": "2026-11-08T10:46:00Z"
+    }
+   ]
+  ],
+  "lookup_error": {
+   "x": 502
+  }
  }
 ]
