@@ -8,7 +8,7 @@ on:
 jobs:
   gate:
     if: ${{ !github.event.pull_request.draft }}
-    name: License gate regression tests
+    name: Gate regression tests
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -17,6 +17,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: python license-check/test_check_licenses.py
+      - run: clean-room-review/test_gate.sh
 
   # The tests above use synthetic Trivy JSON, which cannot catch a change in
   # what Trivy actually emits. This runs the whole action against this repo's
